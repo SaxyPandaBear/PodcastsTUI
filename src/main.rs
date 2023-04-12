@@ -20,19 +20,11 @@ use unicode_width::UnicodeWidthStr;
 
 // App holds the state of the application
 // TODO: persist application state about podcast that is loaded.
+#[derive(Default)]
 struct App {
     // Current value of the input box
     input: String,
     channel: Channel,
-}
-
-impl Default for App {
-    fn default() -> App {
-        App {
-            input: String::new(),
-            channel: Channel::default()
-        }
-    }
 }
 
 #[tokio::main]
@@ -73,7 +65,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        println!("{:?}", err)
+        eprintln!("{:?}", err)
     }
 
     Ok(())
@@ -163,16 +155,15 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Respon
     let contents = app
         .channel
         .items
-        .clone()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(idx, item)| {
-            let content = vec![Spans::from(Span::raw(format!("{}: {}", idx, item.title.unwrap_or(String::from("Title missing!")))))];
+            let content = vec![Spans::from(Span::raw(format!("{}: {}", idx, item.title.as_deref().unwrap_or("Title missing!"))))];
             ListItem::new(content)
         })
         .collect::<Vec<ListItem>>();
 
-    let podcast_name = Paragraph::new(app.channel.title.to_string());
+    let podcast_name = Paragraph::new(app.channel.title.as_ref());
     let contents = List::new(contents).block(Block::default().borders(Borders::ALL).title("Episodes"));
 
     f.render_widget(podcast_name, chunks[2]);
