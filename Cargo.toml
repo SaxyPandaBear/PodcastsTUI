@@ -7,9 +7,14 @@ edition = "2021"
 
 [dependencies]
 crossterm = "0.26.1"
+html2text = "0.5.1"
+rand = "0.8.5"
 reqwest = "0.11.16"
 rss = "2.0.3"
-tokio = { version ="1.27.0", features = ["full"] }
+tokio = { version = "1.27.0", features = ["full"] }
+tracing = "0.1.37"
+tracing-appender = "0.2.2"
+tracing-subscriber = { version = "0.3.16", features = ["std", "env-filter", "registry", "fmt", "ansi"] }
 tui = "0.19.0"
 unicode-width = "0.1.10"
 url = "2.3.1"

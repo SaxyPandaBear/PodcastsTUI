@@ -1,12 +1,13 @@
 mod feed;
 mod message;
+mod trace;
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use message::DisplayMode;
+use message::DisplayAction;
 use rss::{Channel, Item};
 use std::sync::mpsc;
 use std::thread;
@@ -16,19 +17,24 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     time::Duration,
 };
+use tracing::{event as trace_event, instrument, span, Level};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{
+    prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
+};
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 use unicode_width::UnicodeWidthStr;
 
 // App holds the state of the application
 // TODO: persist application state about podcast that is loaded.
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct App {
     // Current value of the input box
     input: String,
@@ -38,12 +44,13 @@ struct App {
     item: Option<Item>,
     state: ListState,
     // keep track of what to render on the UI across ticks
-    display_mode: DisplayMode,
+    display_action: DisplayAction,
 }
 
 impl App {
     // Select the next item. This will not be reflected until the widget is drawn in the
     // `Terminal::draw` callback using `Frame::render_stateful_widget`.
+    #[instrument]
     pub fn next(&mut self) {
         let i = self
             .channel
@@ -55,11 +62,13 @@ impl App {
                     .map(|i| if i >= items.len() - 1 { 0 } else { i + 1 })
             })
             .unwrap_or_default();
+        trace_event!(Level::DEBUG, idx = i);
         self.state.select(Some(i));
     }
 
     // Select the previous item. This will not be reflected until the widget is drawn in the
     // `Terminal::draw` callback using `Frame::render_stateful_widget`.
+    #[instrument]
     pub fn previous(&mut self) {
         let i: usize = self
             .channel
@@ -71,12 +80,26 @@ impl App {
                     .map(|i| if i == 0 { items.len() - 1 } else { i - 1 })
             })
             .unwrap_or_default();
+        trace_event!(Level::DEBUG, idx = i);
         self.state.select(Some(i));
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // set up logging
+    let file_appender = RollingFileAppender::new(Rotation::HOURLY, "/tmp", "podcasts.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(non_blocking)
+        .with_thread_names(true)
+        .with_level(true);
+    let span_filter = trace::TraceFilter::default();
+    tracing_subscriber::registry()
+        .with(fmt_layer.with_filter(span_filter))
+        .init();
+
     // create app
     let app = App::default();
 
@@ -132,22 +155,41 @@ fn run_app<B: Backend>(
                 KeyCode::Esc => return Ok(()),
                 // submit data
                 KeyCode::Enter => {
-                    match app.display_mode {
-                        DisplayMode::EpisodeList => {
+                    trace_event!(
+                        Level::INFO,
+                        "Submitting request for display mode {display:?}",
+                        display = app.display_action
+                    );
+                    match app.display_action {
+                        DisplayAction::Input => {
                             // submit a message to data layer
                             let msg = app.input.drain(..).collect::<String>();
                             if let Ok(u) = url::Url::parse(msg.as_str()) {
                                 // TODO: handle error
+                                trace_event!(Level::INFO, "Fetch RSS feed from {url}", url = msg);
                                 data_tx.send(message::Request::Feed(u));
+                                app.display_action = DisplayAction::ListEpisodes;
                             }
                         }
-                        DisplayMode::ItemContent => {
+                        DisplayAction::ListEpisodes => {
                             let item: Option<Item> =
                                 app.channel.as_ref().map(|c| c.items()).and_then(|items| {
                                     app.state.selected().and_then(|idx| items.get(idx)).cloned()
                                     // TODO: there must be a more idiomatic way
                                 });
+                            trace_event!(
+                                Level::INFO,
+                                "Load podcast episode {exists}",
+                                exists = item.is_some()
+                            );
+                            if item.is_some() {
+                                app.display_action = DisplayAction::DescribeEpisode;
+                            }
                             data_tx.send(message::Request::Episode(item));
+                        }
+                        DisplayAction::DescribeEpisode => {
+                            // TODO: idk what should happen here yet. probably need to have another list of options.
+                            trace_event!(Level::INFO, "Load episode");
                         }
                     }
                 }
@@ -217,10 +259,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Respon
 
     // Output area
     if let Ok(r) = rx.try_recv() {
-        app.display_mode = r.display_type();
         match r {
             message::Response::Feed(c) => {
                 app.channel = Some(c);
+                // loaded a channel, so next action should be to select an episode
             }
             message::Response::Episode(e) => {
                 app.item = Some(e);
@@ -228,30 +270,34 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Respon
         }
     }
 
-    match app.display_mode {
-        DisplayMode::EpisodeList => {
+    match app.display_action {
+        DisplayAction::ListEpisodes | DisplayAction::Input => {
             display_feed_episodes(f, app, chunks[2], chunks[3]);
         }
-        DisplayMode::ItemContent => {
+        DisplayAction::DescribeEpisode => {
             display_episode_details(f, app, chunks[2], chunks[3]);
         }
     };
 }
 
 #[tokio::main]
+#[instrument]
 async fn handle_user_input(
     responder: &Sender<message::Response>,
     receiver: &Receiver<message::Request>,
 ) {
     if let Ok(r) = receiver.try_recv() {
+        trace_event!(Level::INFO, "{:?}", r);
         match r {
             message::Request::Feed(u) => {
+                trace_event!(Level::INFO, "received feed request");
                 if let Ok(c) = feed::get_feed(u).await {
                     // TODO: error handling
                     responder.send(message::Response::Feed(c));
                 }
             }
             message::Request::Episode(e) => {
+                trace_event!(Level::INFO, "received episode request");
                 if let Some(i) = e {
                     // don't need to load anything, just pass it back to the UI
                     responder.send(message::Response::Episode(i));
@@ -267,6 +313,8 @@ fn display_feed_episodes<B: Backend>(
     title_area: Rect,
     content_area: Rect,
 ) {
+    let span = span!(Level::TRACE, "render_feed");
+    trace_event!(parent: &span, Level::TRACE, "rendering podcast episodes");
     let contents = app
         .channel
         .as_ref()
@@ -284,7 +332,16 @@ fn display_feed_episodes<B: Backend>(
         })
         .collect::<Vec<ListItem>>();
 
-    let podcast_name = Paragraph::new(app.channel.as_ref().map(|c| c.title()).unwrap_or("[Title]"));
+    let podcast_name = app.channel.as_ref().map(|c| c.title()).unwrap_or("[Title]");
+
+    trace_event!(
+        parent: &span,
+        Level::DEBUG,
+        num_episodes = contents.len(),
+        name = podcast_name
+    );
+
+    let podcast_name = Paragraph::new(podcast_name);
     let contents = List::new(contents)
         .block(Block::default().borders(Borders::ALL).title("Episodes"))
         .highlight_style(
@@ -304,8 +361,42 @@ fn display_episode_details<B: Backend>(
     title_area: Rect,
     content_area: Rect,
 ) {
-    let p1 = Paragraph::new("EPISODE TITLE");
-    let p2 = Paragraph::new("STUFF GOES HERE");
-    f.render_widget(p1, title_area);
-    f.render_widget(p2, content_area);
+    let span = span!(Level::TRACE, "render_episode");
+    trace_event!(parent: &span, Level::TRACE, "rendering episode details");
+
+    let episode_name = app
+        .item
+        .as_ref()
+        .and_then(|i| i.title())
+        .unwrap_or("[Episode Title]")
+        .to_string();
+    let description = app
+        .item
+        .as_ref()
+        .and_then(|i| i.description())
+        .unwrap_or("Description")
+        .to_string();
+    let description = html2text::from_read(description.as_bytes(), content_area.width.into());
+    let audio_link = app
+        .item
+        .as_ref()
+        .and_then(|i| i.enclosure.as_ref())
+        .map(|e| e.url())
+        .unwrap_or("[Audio URL]")
+        .to_string();
+
+    let text = vec![
+        Spans::from(Span::styled(
+            audio_link,
+            Style::default()
+                .add_modifier(Modifier::ITALIC)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Spans::from(Span::raw(description)),
+    ];
+
+    let episode_name = Paragraph::new(episode_name);
+    let contents = Paragraph::new(text).wrap(Wrap { trim: true });
+    f.render_widget(episode_name, title_area);
+    f.render_widget(contents, content_area);
 }
