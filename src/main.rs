@@ -215,13 +215,13 @@ fn run_app<B: Backend>(
 fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Response>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(4)
+        .horizontal_margin(3)
+        .vertical_margin(1)
         .constraints(
             [
-                Constraint::Percentage(8),  // controls
-                Constraint::Percentage(10), // input box
-                Constraint::Percentage(8),  // output title
-                Constraint::Percentage(84), // output contents
+                Constraint::Percentage(7),  // controls
+                Constraint::Percentage(8), // input box
+                Constraint::Percentage(85), // output contents
             ]
             .as_ref(),
         )
@@ -271,10 +271,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Respon
 
     match app.display_action {
         DisplayAction::ListEpisodes | DisplayAction::Input => {
-            display_feed_episodes(f, app, chunks[2], chunks[3]);
+            display_feed_episodes(f, app, chunks[2]);
         }
         DisplayAction::DescribeEpisode => {
-            display_episode_details(f, app, chunks[2], chunks[3]);
+            display_episode_details(f, app, chunks[2]);
         }
     };
 }
@@ -315,7 +315,6 @@ async fn handle_user_input(
 fn display_feed_episodes<B: Backend>(
     f: &mut Frame<B>,
     app: &mut App,
-    title_area: Rect,
     content_area: Rect,
 ) {
     let span = span!(Level::TRACE, "render_feed");
@@ -338,28 +337,28 @@ fn display_feed_episodes<B: Backend>(
         })
         .collect::<Vec<ListItem>>();
 
-    let podcast_name = app.channel.as_ref().map(|c| c.title()).unwrap_or("[Title]");
+    let podcast_name = app.channel
+        .as_ref()
+        .map(|c| format!("[{}]", c.title()))
+        .unwrap_or("[Title]".to_string());
 
     debug!(num_episodes = contents.len(),name = podcast_name);
 
-    let podcast_name = Paragraph::new(podcast_name);
     let contents = List::new(contents)
-        .block(Block::default().borders(Borders::ALL).title("Episodes"))
+        .block(Block::default().borders(Borders::ALL).title(podcast_name))
         .highlight_style(
             Style::default()
                 .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::SLOW_BLINK),
+                .add_modifier(Modifier::ITALIC),
         )
-        .highlight_symbol(">>");
+        .highlight_symbol(">> ");
 
-    f.render_widget(podcast_name, title_area);
     f.render_stateful_widget(contents, content_area, &mut app.state);
 }
 
 fn display_episode_details<B: Backend>(
     f: &mut Frame<B>,
     app: &App,
-    title_area: Rect,
     content_area: Rect,
 ) {
     let span = span!(Level::TRACE, "render_episode");
@@ -370,7 +369,8 @@ fn display_episode_details<B: Backend>(
         .item
         .as_ref()
         .and_then(|i| i.title())
-        .unwrap_or("[Episode Title]");
+        .map(|t| format!("[{}]", t))
+        .unwrap_or("[Episode Title]".to_string());
     let description = app
         .item
         .as_ref()
@@ -391,11 +391,12 @@ fn display_episode_details<B: Backend>(
                 .add_modifier(Modifier::ITALIC)
                 .add_modifier(Modifier::BOLD),
         )),
+        Spans::from(Span::raw("")),
         Spans::from(Span::raw(description)),
     ];
 
-    let episode_name = Paragraph::new(episode_name);
-    let contents = Paragraph::new(text).wrap(Wrap { trim: true });
-    f.render_widget(episode_name, title_area);
+    let contents = Paragraph::new(text)
+        .wrap(Wrap { trim: true })
+        .block(Block::default().borders(Borders::ALL).title(episode_name));
     f.render_widget(contents, content_area);
 }
