@@ -17,7 +17,7 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     time::Duration,
 };
-use tracing::{event as trace_event, instrument, span, Level};
+use tracing::{info, trace, debug, instrument, span, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
@@ -62,7 +62,7 @@ impl App {
                     .map(|i| if i >= items.len() - 1 { 0 } else { i + 1 })
             })
             .unwrap_or_default();
-        trace_event!(Level::DEBUG, idx = i);
+        debug!(idx = i);
         self.state.select(Some(i));
     }
 
@@ -80,7 +80,7 @@ impl App {
                     .map(|i| if i == 0 { items.len() - 1 } else { i - 1 })
             })
             .unwrap_or_default();
-        trace_event!(Level::DEBUG, idx = i);
+        debug!(idx = i);
         self.state.select(Some(i));
     }
 }
@@ -155,18 +155,14 @@ fn run_app<B: Backend>(
                 KeyCode::Esc => return Ok(()),
                 // submit data
                 KeyCode::Enter => {
-                    trace_event!(
-                        Level::INFO,
-                        "Submitting request for display mode {display:?}",
-                        display = app.display_action
-                    );
+                    info!("Submitting request for display mode {display:?}", display = app.display_action);
                     match app.display_action {
                         DisplayAction::Input => {
                             // submit a message to data layer
                             let msg = app.input.drain(..).collect::<String>();
                             if let Ok(u) = url::Url::parse(msg.as_str()) {
                                 // TODO: handle error
-                                trace_event!(Level::INFO, "Fetch RSS feed from {url}", url = msg);
+                                info!("Fetch RSS feed from {url}", url = msg);
                                 data_tx.send(message::Request::Feed(u));
                                 app.display_action = DisplayAction::ListEpisodes;
                             }
@@ -177,11 +173,7 @@ fn run_app<B: Backend>(
                                     app.state.selected().and_then(|idx| items.get(idx)).cloned()
                                     // TODO: there must be a more idiomatic way
                                 });
-                            trace_event!(
-                                Level::INFO,
-                                "Load podcast episode {exists}",
-                                exists = item.is_some()
-                            );
+                            info!("Load podcast episode {exists}", exists = item.is_some());
                             if item.is_some() {
                                 app.display_action = DisplayAction::DescribeEpisode;
                             }
@@ -189,7 +181,7 @@ fn run_app<B: Backend>(
                         }
                         DisplayAction::DescribeEpisode => {
                             // TODO: idk what should happen here yet. probably need to have another list of options.
-                            trace_event!(Level::INFO, "Load episode");
+                            info!("Load episode");
                         }
                     }
                 }
@@ -287,17 +279,17 @@ async fn handle_user_input(
     receiver: &Receiver<message::Request>,
 ) {
     if let Ok(r) = receiver.try_recv() {
-        trace_event!(Level::INFO, "{:?}", r);
+        info!("Request type: {:?}", r);
         match r {
             message::Request::Feed(u) => {
-                trace_event!(Level::INFO, "received feed request");
+                info!("received feed request");
                 if let Ok(c) = feed::get_feed(u).await {
                     // TODO: error handling
                     responder.send(message::Response::Feed(c));
                 }
             }
             message::Request::Episode(e) => {
-                trace_event!(Level::INFO, "received episode request");
+                info!("received episode request");
                 if let Some(i) = e {
                     // don't need to load anything, just pass it back to the UI
                     responder.send(message::Response::Episode(i));
@@ -314,7 +306,8 @@ fn display_feed_episodes<B: Backend>(
     content_area: Rect,
 ) {
     let span = span!(Level::TRACE, "render_feed");
-    trace_event!(parent: &span, Level::TRACE, "rendering podcast episodes");
+    let _entered = span.enter();
+    trace!("rendering podcast episodes");
     let contents = app
         .channel
         .as_ref()
@@ -334,12 +327,7 @@ fn display_feed_episodes<B: Backend>(
 
     let podcast_name = app.channel.as_ref().map(|c| c.title()).unwrap_or("[Title]");
 
-    trace_event!(
-        parent: &span,
-        Level::DEBUG,
-        num_episodes = contents.len(),
-        name = podcast_name
-    );
+    debug!(num_episodes = contents.len(),name = podcast_name);
 
     let podcast_name = Paragraph::new(podcast_name);
     let contents = List::new(contents)
@@ -362,28 +350,26 @@ fn display_episode_details<B: Backend>(
     content_area: Rect,
 ) {
     let span = span!(Level::TRACE, "render_episode");
-    trace_event!(parent: &span, Level::TRACE, "rendering episode details");
+    let _entered = span.enter();
+    trace!("rendering episode details");
 
     let episode_name = app
         .item
         .as_ref()
         .and_then(|i| i.title())
-        .unwrap_or("[Episode Title]")
-        .to_string();
+        .unwrap_or("[Episode Title]");
     let description = app
         .item
         .as_ref()
         .and_then(|i| i.description())
-        .unwrap_or("Description")
-        .to_string();
+        .unwrap_or("Description");
     let description = html2text::from_read(description.as_bytes(), content_area.width.into());
     let audio_link = app
         .item
         .as_ref()
         .and_then(|i| i.enclosure.as_ref())
         .map(|e| e.url())
-        .unwrap_or("[Audio URL]")
-        .to_string();
+        .unwrap_or("[Audio URL]");
 
     let text = vec![
         Spans::from(Span::styled(
