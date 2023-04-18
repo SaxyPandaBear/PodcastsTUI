@@ -17,7 +17,7 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     time::Duration,
 };
-use tracing::{info, trace, debug, instrument, span, Level};
+use tracing::{info, trace, debug, error, instrument, span, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
@@ -147,6 +147,8 @@ fn run_app<B: Backend>(
     ui_rx: &Receiver<message::Response>,
 ) -> io::Result<()> {
     loop {
+        let span = span!(Level::TRACE, "draw");
+        let _enter = span.enter();
         terminal.draw(|f| ui(f, &mut app, ui_rx))?;
 
         if let Event::Key(key) = event::read()? {
@@ -161,9 +163,11 @@ fn run_app<B: Backend>(
                             // submit a message to data layer
                             let msg = app.input.drain(..).collect::<String>();
                             if let Ok(u) = url::Url::parse(msg.as_str()) {
-                                // TODO: handle error
                                 info!("Fetch RSS feed from {url}", url = msg);
-                                data_tx.send(message::Request::Feed(u));
+                                let res = data_tx.send(message::Request::Feed(u));
+                                if res.is_err() {
+                                    error!("failed to send message {:?}", res.unwrap_err());
+                                }
                                 app.display_action = DisplayAction::ListEpisodes;
                             }
                         }
@@ -177,7 +181,10 @@ fn run_app<B: Backend>(
                             if item.is_some() {
                                 app.display_action = DisplayAction::DescribeEpisode;
                             }
-                            data_tx.send(message::Request::Episode(item));
+                            let res = data_tx.send(message::Request::Episode(item));
+                            if res.is_err() {
+                                error!("failed to send message {:?}", res.unwrap_err());
+                            }
                         }
                         DisplayAction::DescribeEpisode => {
                             // TODO: idk what should happen here yet. probably need to have another list of options.
@@ -285,14 +292,20 @@ async fn handle_user_input(
                 info!("received feed request");
                 if let Ok(c) = feed::get_feed(u).await {
                     // TODO: error handling
-                    responder.send(message::Response::Feed(c));
+                    let res = responder.send(message::Response::Feed(c));
+                    if res.is_err() {
+                        error!("failed to send message: {:?}", res.unwrap_err());
+                    }
                 }
             }
             message::Request::Episode(e) => {
                 info!("received episode request");
                 if let Some(i) = e {
                     // don't need to load anything, just pass it back to the UI
-                    responder.send(message::Response::Episode(i));
+                    let res = responder.send(message::Response::Episode(i));
+                    if res.is_err() {
+                        error!("failed to send message {:?}", res.unwrap_err());
+                    }
                 }
             }
         }
