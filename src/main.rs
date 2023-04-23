@@ -1,6 +1,7 @@
 mod feed;
 mod message;
 mod trace;
+mod ui;
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -17,7 +18,7 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     time::Duration,
 };
-use tracing::{info, trace, debug, error, instrument, span, Level};
+use tracing::{debug, error, info, instrument, span, trace, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
@@ -35,7 +36,7 @@ use unicode_width::UnicodeWidthStr;
 // App holds the state of the application
 // TODO: persist application state about podcast that is loaded.
 #[derive(Default, Debug)]
-struct App {
+pub struct App {
     // Current value of the input box
     input: String,
     // Loaded podcast channel/feed
@@ -111,7 +112,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // spawn data thread
     thread::spawn(move || loop {
         handle_user_input(&ui_tx, &data_rx);
-        thread::sleep(Duration::new(0, 1000));
+        thread::sleep(Duration::new(0, 10000));
     });
 
     // setup terminal
@@ -151,62 +152,67 @@ fn run_app<B: Backend>(
         let _enter = span.enter();
         terminal.draw(|f| ui(f, &mut app, ui_rx))?;
 
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                // quit
-                KeyCode::Esc => return Ok(()),
-                // submit data
-                KeyCode::Enter => {
-                    info!("Submitting request for display mode {display:?}", display = app.display_action);
-                    match app.display_action {
-                        DisplayAction::Input => {
-                            // submit a message to data layer
-                            let msg = app.input.drain(..).collect::<String>();
-                            if let Ok(u) = url::Url::parse(msg.as_str()) {
-                                info!("Fetch RSS feed from {url}", url = msg);
-                                let res = data_tx.send(message::Request::Feed(u));
+        if event::poll(Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    // quit
+                    KeyCode::Esc => return Ok(()),
+                    // submit data
+                    KeyCode::Enter => {
+                        info!(
+                            "Submitting request for display mode {display:?}",
+                            display = app.display_action
+                        );
+                        match app.display_action {
+                            DisplayAction::Input => {
+                                // submit a message to data layer
+                                let msg = app.input.drain(..).collect::<String>();
+                                if let Ok(u) = url::Url::parse(msg.as_str()) {
+                                    info!("Fetch RSS feed from {url}", url = msg);
+                                    let res = data_tx.send(message::Request::Feed(u));
+                                    if res.is_err() {
+                                        error!("failed to send message {:?}", res.unwrap_err());
+                                    }
+                                    app.display_action = DisplayAction::ListEpisodes;
+                                }
+                            }
+                            DisplayAction::ListEpisodes => {
+                                let item: Option<Item> =
+                                    app.channel.as_ref().map(|c| c.items()).and_then(|items| {
+                                        app.state.selected().and_then(|idx| items.get(idx)).cloned()
+                                        // TODO: there must be a more idiomatic way
+                                    });
+                                info!("Load podcast episode {exists}", exists = item.is_some());
+                                if item.is_some() {
+                                    app.display_action = DisplayAction::DescribeEpisode;
+                                }
+                                let res = data_tx.send(message::Request::Episode(item));
                                 if res.is_err() {
                                     error!("failed to send message {:?}", res.unwrap_err());
                                 }
-                                app.display_action = DisplayAction::ListEpisodes;
                             }
-                        }
-                        DisplayAction::ListEpisodes => {
-                            let item: Option<Item> =
-                                app.channel.as_ref().map(|c| c.items()).and_then(|items| {
-                                    app.state.selected().and_then(|idx| items.get(idx)).cloned()
-                                    // TODO: there must be a more idiomatic way
-                                });
-                            info!("Load podcast episode {exists}", exists = item.is_some());
-                            if item.is_some() {
-                                app.display_action = DisplayAction::DescribeEpisode;
+                            DisplayAction::DescribeEpisode => {
+                                // TODO: idk what should happen here yet. probably need to have another list of options.
+                                info!("Load episode");
                             }
-                            let res = data_tx.send(message::Request::Episode(item));
-                            if res.is_err() {
-                                error!("failed to send message {:?}", res.unwrap_err());
-                            }
-                        }
-                        DisplayAction::DescribeEpisode => {
-                            // TODO: idk what should happen here yet. probably need to have another list of options.
-                            info!("Load episode");
                         }
                     }
+                    // user input
+                    KeyCode::Char(c) => {
+                        app.input.push(c);
+                    }
+                    KeyCode::Backspace => {
+                        app.input.pop();
+                    }
+                    // list selection
+                    KeyCode::Up => {
+                        app.previous();
+                    }
+                    KeyCode::Down => {
+                        app.next();
+                    }
+                    _ => {}
                 }
-                // user input
-                KeyCode::Char(c) => {
-                    app.input.push(c);
-                }
-                KeyCode::Backspace => {
-                    app.input.pop();
-                }
-                // list selection
-                KeyCode::Up => {
-                    app.previous();
-                }
-                KeyCode::Down => {
-                    app.next();
-                }
-                _ => {}
             }
         }
     }
@@ -220,7 +226,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Respon
         .constraints(
             [
                 Constraint::Percentage(7),  // controls
-                Constraint::Percentage(8), // input box
+                Constraint::Percentage(8),  // input box
                 Constraint::Percentage(85), // output contents
             ]
             .as_ref(),
@@ -312,11 +318,7 @@ async fn handle_user_input(
     }
 }
 
-fn display_feed_episodes<B: Backend>(
-    f: &mut Frame<B>,
-    app: &mut App,
-    content_area: Rect,
-) {
+fn display_feed_episodes<B: Backend>(f: &mut Frame<B>, app: &mut App, content_area: Rect) {
     let span = span!(Level::TRACE, "render_feed");
     let _entered = span.enter();
     trace!("rendering podcast episodes");
@@ -337,12 +339,13 @@ fn display_feed_episodes<B: Backend>(
         })
         .collect::<Vec<ListItem>>();
 
-    let podcast_name = app.channel
+    let podcast_name = app
+        .channel
         .as_ref()
         .map(|c| format!("[{}]", c.title()))
         .unwrap_or("[Title]".to_string());
 
-    debug!(num_episodes = contents.len(),name = podcast_name);
+    debug!(num_episodes = contents.len(), name = podcast_name);
 
     let contents = List::new(contents)
         .block(Block::default().borders(Borders::ALL).title(podcast_name))
@@ -356,11 +359,7 @@ fn display_feed_episodes<B: Backend>(
     f.render_stateful_widget(contents, content_area, &mut app.state);
 }
 
-fn display_episode_details<B: Backend>(
-    f: &mut Frame<B>,
-    app: &App,
-    content_area: Rect,
-) {
+fn display_episode_details<B: Backend>(f: &mut Frame<B>, app: &App, content_area: Rect) {
     let span = span!(Level::TRACE, "render_episode");
     let _entered = span.enter();
     trace!("rendering episode details");
