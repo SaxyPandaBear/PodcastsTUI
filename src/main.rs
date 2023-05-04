@@ -18,20 +18,17 @@ use std::{
     sync::mpsc::{Receiver, Sender},
     time::Duration,
 };
-use tracing::{debug, error, info, instrument, span, trace, Level};
+use tracing::{debug, error, info, instrument, span, Level};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
 };
 use tui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::ListState,
     Frame, Terminal,
 };
-use unicode_width::UnicodeWidthStr;
+use ui::draw_main_layout;
 
 // App holds the state of the application
 // TODO: persist application state about podcast that is loaded.
@@ -150,7 +147,7 @@ fn run_app<B: Backend>(
     loop {
         let span = span!(Level::TRACE, "draw");
         let _enter = span.enter();
-        terminal.draw(|f| ui(f, &mut app, ui_rx))?;
+        terminal.draw(|f| display(f, &mut app, ui_rx))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
@@ -218,71 +215,23 @@ fn run_app<B: Backend>(
     }
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Response>) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .horizontal_margin(3)
-        .vertical_margin(1)
-        .constraints(
-            [
-                Constraint::Percentage(7),  // controls
-                Constraint::Percentage(8),  // input box
-                Constraint::Percentage(85), // output contents
-            ]
-            .as_ref(),
-        )
-        .split(f.size());
-
-    let (msg, style) = (
-        vec![
-            Span::styled("Podcasts::", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw("Press "),
-            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" to exit, "),
-            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" to input"),
-        ],
-        Style::default(),
-    );
-    let mut text = Text::from(Spans::from(msg));
-    text.patch_style(style);
-    let help_message = Paragraph::new(text);
-    f.render_widget(help_message, chunks[0]);
-
-    let input = Paragraph::new(app.input.as_ref())
-        .style(Style::default())
-        .block(Block::default().borders(Borders::ALL).title("Input"));
-    f.render_widget(input, chunks[1]);
-
-    // Make the cursor visible and ask tui-rs to put it at the specified coordinates after rendering
-    f.set_cursor(
-        // Put cursor past the end of the input text
-        chunks[1].x + app.input.width() as u16 + 1,
-        // Move one line down, from the border to the input line
-        chunks[1].y + 1,
-    );
-
-    // Output area
+fn display<B: Backend>(f: &mut Frame<B>, app: &mut App, rx: &Receiver<message::Response>) {
     if let Ok(r) = rx.try_recv() {
-        match r {
-            message::Response::Feed(c) => {
-                app.channel = Some(c);
-                // loaded a channel, so next action should be to select an episode
-            }
-            message::Response::Episode(e) => {
-                app.item = Some(e);
-            }
-        }
+        update_app_state(app, r)
     }
 
-    match app.display_action {
-        DisplayAction::ListEpisodes | DisplayAction::Input => {
-            display_feed_episodes(f, app, chunks[2]);
+    draw_main_layout(f, app);
+}
+
+fn update_app_state(app: &mut App, msg: message::Response) {
+    match msg {
+        message::Response::Feed(c) => {
+            app.channel = Some(c);
         }
-        DisplayAction::DescribeEpisode => {
-            display_episode_details(f, app, chunks[2]);
+        message::Response::Episode(e) => {
+            app.item = Some(e);
         }
-    };
+    }
 }
 
 #[tokio::main]
@@ -316,86 +265,4 @@ async fn handle_user_input(
             }
         }
     }
-}
-
-fn display_feed_episodes<B: Backend>(f: &mut Frame<B>, app: &mut App, content_area: Rect) {
-    let span = span!(Level::TRACE, "render_feed");
-    let _entered = span.enter();
-    trace!("rendering podcast episodes");
-    let contents = app
-        .channel
-        .as_ref()
-        .and_then(|c| Some(c.items()))
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-        .map(|(idx, item)| {
-            let content = vec![Spans::from(Span::raw(format!(
-                "{}: {}",
-                idx,
-                item.title.as_deref().unwrap_or("Title missing!")
-            )))];
-            ListItem::new(content)
-        })
-        .collect::<Vec<ListItem>>();
-
-    let podcast_name = app
-        .channel
-        .as_ref()
-        .map(|c| format!("[{}]", c.title()))
-        .unwrap_or("[Title]".to_string());
-
-    debug!(num_episodes = contents.len(), name = podcast_name);
-
-    let contents = List::new(contents)
-        .block(Block::default().borders(Borders::ALL).title(podcast_name))
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::ITALIC),
-        )
-        .highlight_symbol(">> ");
-
-    f.render_stateful_widget(contents, content_area, &mut app.state);
-}
-
-fn display_episode_details<B: Backend>(f: &mut Frame<B>, app: &App, content_area: Rect) {
-    let span = span!(Level::TRACE, "render_episode");
-    let _entered = span.enter();
-    trace!("rendering episode details");
-
-    let episode_name = app
-        .item
-        .as_ref()
-        .and_then(|i| i.title())
-        .map(|t| format!("[{}]", t))
-        .unwrap_or("[Episode Title]".to_string());
-    let description = app
-        .item
-        .as_ref()
-        .and_then(|i| i.description())
-        .unwrap_or("Description");
-    let description = html2text::from_read(description.as_bytes(), content_area.width.into());
-    let audio_link = app
-        .item
-        .as_ref()
-        .and_then(|i| i.enclosure.as_ref())
-        .map(|e| e.url())
-        .unwrap_or("[Audio URL]");
-
-    let text = vec![
-        Spans::from(Span::styled(
-            audio_link,
-            Style::default()
-                .add_modifier(Modifier::ITALIC)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Spans::from(Span::raw("")),
-        Spans::from(Span::raw(description)),
-    ];
-
-    let contents = Paragraph::new(text)
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title(episode_name));
-    f.render_widget(contents, content_area);
 }
