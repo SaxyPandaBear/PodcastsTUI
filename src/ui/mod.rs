@@ -40,7 +40,7 @@ where
     draw_playbar(f, app, chunks[3]);
 }
 
-pub fn draw_hint<B: Backend>(f: &mut Frame<B>, app: &App, parent: Rect) {
+pub fn draw_hint<B: Backend>(f: &mut Frame<B>, _app: &App, parent: Rect) {
     let (msg, style) = (
         vec![
             Span::styled("Podcasts::", Style::default().add_modifier(Modifier::BOLD)),
@@ -165,7 +165,8 @@ pub fn draw_episode_details<B: Backend>(f: &mut Frame<B>, app: &App, parent: Rec
     f.render_widget(contents, parent);
 }
 
-pub fn draw_playbar<B: Backend>(f: &mut Frame<B>, app: &mut App, parent: Rect) {
+// TODO: make this an actual play bar
+pub fn draw_playbar<B: Backend>(f: &mut Frame<B>, _app: &mut App, parent: Rect) {
     let text = Spans::from(Span::raw("This is the playbar"));
     let contents = Paragraph::new(text).block(Block::default().borders(Borders::all()));
     f.render_widget(contents, parent);

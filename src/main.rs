@@ -43,6 +43,8 @@ pub struct App {
     state: ListState,
     // keep track of what to render on the UI across ticks
     display_action: DisplayAction,
+    // feature flag to know whether to capture text input
+    editable: bool, 
 }
 
 impl App {
@@ -152,14 +154,23 @@ fn run_app<B: Backend>(
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    // quit
-                    KeyCode::Esc => return Ok(()),
+                    // exit edit mode, or quit the application
+                    KeyCode::Esc => {
+                        if app.editable {
+                            info!("Exiting edit mode");
+                            app.editable = false;
+                        } else {
+                            info!("Closing application");
+                            return Ok(())
+                        }
+                    },
                     // submit data
                     KeyCode::Enter => {
                         info!(
                             "Submitting request for display mode {display:?}",
                             display = app.display_action
                         );
+                        // TODO: change this to 
                         match app.display_action {
                             DisplayAction::Input => {
                                 // submit a message to data layer
@@ -196,10 +207,17 @@ fn run_app<B: Backend>(
                     }
                     // user input
                     KeyCode::Char(c) => {
-                        app.input.push(c);
+                        if app.editable {
+                            app.input.push(c);
+                        } else if c == '/' {
+                            app.editable = true;
+                            app.input.push(c);
+                        }
                     }
                     KeyCode::Backspace => {
-                        app.input.pop();
+                        if app.editable {
+                            app.input.pop();
+                        }
                     }
                     // list selection
                     KeyCode::Up => {
