@@ -24,11 +24,11 @@ where
         .horizontal_margin(2)
         .vertical_margin(1)
         .constraints(
-            [
-                Constraint::Percentage(7),  // help text
-                Constraint::Percentage(8),  // input box
-                Constraint::Percentage(80), // output contents
-                Constraint::Percentage(5),  // play bar
+            [ // TODO: figure out the minimum size requirements
+                Constraint::Percentage(10),  // help text
+                Constraint::Percentage(15),  // input box
+                Constraint::Percentage(65), // output contents
+                Constraint::Percentage(15),  // play bar
             ]
             .as_ref(),
         )
