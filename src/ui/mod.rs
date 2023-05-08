@@ -1,3 +1,5 @@
+pub mod input;
+
 use tracing::{debug, span, trace, Level};
 use tui::{
     backend::Backend,

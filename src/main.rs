@@ -30,6 +30,8 @@ use tui::{
 };
 use ui::draw_main_layout;
 
+use crate::ui::input::{self, InputType};
+
 // App holds the state of the application
 // TODO: persist application state about podcast that is loaded.
 #[derive(Default, Debug)]
@@ -162,18 +164,26 @@ fn run_app<B: Backend>(
                             "Submitting request for display mode {display:?}",
                             display = app.display_action
                         );
-                        // TODO: change this to
+                        // TODO: figure out how to handle different types of text input
                         match app.display_action {
                             DisplayAction::Input => {
                                 // submit a message to data layer
                                 let msg = app.input.drain(..).collect::<String>();
-                                if let Ok(u) = url::Url::parse(msg.as_str()) {
-                                    info!("Fetch RSS feed from {url}", url = msg);
-                                    let res = data_tx.send(message::Request::Feed(u));
-                                    if res.is_err() {
-                                        error!("failed to send message {:?}", res.unwrap_err());
+                                match input::parse(msg.as_ref()) {
+                                    InputType::FetchPodcastFeed(url) => {
+                                        info!("fetch podcast feed: {}", url);
+                                        if let Ok(u) = url::Url::parse(url.as_str()) {
+                                            info!("Fetch RSS feed from {url}", url = msg);
+                                            let res = data_tx.send(message::Request::Feed(u));
+                                            if res.is_err() {
+                                                error!("failed to send message {:?}", res.unwrap_err());
+                                            }
+                                            app.display_action = DisplayAction::ListEpisodes;
+                                        }
                                     }
-                                    app.display_action = DisplayAction::ListEpisodes;
+                                    _ => {
+                                        debug!("no op")
+                                    }
                                 }
                             }
                             DisplayAction::ListEpisodes => {

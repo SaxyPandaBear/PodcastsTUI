@@ -4,7 +4,7 @@ use url::Url;
 #[derive(Default, Debug)]
 pub enum DisplayAction {
     #[default]
-    Input,
+    Input, // TODO: this needs to change
     ListEpisodes,
     DescribeEpisode,
 }
