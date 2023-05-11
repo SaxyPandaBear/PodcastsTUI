@@ -1,3 +1,4 @@
+mod data;
 mod feed;
 mod message;
 mod trace;
@@ -30,7 +31,7 @@ use tui::{
 };
 use ui::draw_main_layout;
 
-use crate::ui::input::{self, InputType};
+use crate::ui::input::parse;
 
 // App holds the state of the application
 // TODO: persist application state about podcast that is loaded.
@@ -42,7 +43,7 @@ pub struct App {
     channel: Option<Channel>,
     // Loaded podcast episode
     item: Option<Item>,
-    state: ListState,
+    state: ListState, // TODO: should there be multiple list states? 
     // keep track of what to render on the UI across ticks
     display_action: DisplayAction,
 }
@@ -110,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // spawn data thread
     thread::spawn(move || loop {
-        handle_user_input(&ui_tx, &data_rx);
+        data::handle_background_request(&ui_tx, &data_rx);
         thread::sleep(Duration::new(0, 10000));
     });
 
@@ -169,22 +170,7 @@ fn run_app<B: Backend>(
                             DisplayAction::Input => {
                                 // submit a message to data layer
                                 let msg = app.input.drain(..).collect::<String>();
-                                match input::parse(msg.as_ref()) {
-                                    InputType::FetchPodcastFeed(url) => {
-                                        info!("fetch podcast feed: {}", url);
-                                        if let Ok(u) = url::Url::parse(url.as_str()) {
-                                            info!("Fetch RSS feed from {url}", url = msg);
-                                            let res = data_tx.send(message::Request::Feed(u));
-                                            if res.is_err() {
-                                                error!("failed to send message {:?}", res.unwrap_err());
-                                            }
-                                            app.display_action = DisplayAction::ListEpisodes;
-                                        }
-                                    }
-                                    _ => {
-                                        debug!("no op")
-                                    }
-                                }
+                                data::handle_user_input(&mut app, data_tx, parse(msg.as_str()))
                             }
                             DisplayAction::ListEpisodes => {
                                 let item: Option<Item> =
@@ -192,6 +178,7 @@ fn run_app<B: Backend>(
                                         app.state.selected().and_then(|idx| items.get(idx)).cloned()
                                         // TODO: there must be a more idiomatic way
                                     });
+                                // TODO: clean this up
                                 info!("Load podcast episode {exists}", exists = item.is_some());
                                 if item.is_some() {
                                     app.display_action = DisplayAction::DescribeEpisode;
@@ -243,39 +230,6 @@ fn update_app_state(app: &mut App, msg: message::Response) {
         }
         message::Response::Episode(e) => {
             app.item = Some(e);
-        }
-    }
-}
-
-#[tokio::main]
-#[instrument]
-async fn handle_user_input(
-    responder: &Sender<message::Response>,
-    receiver: &Receiver<message::Request>,
-) {
-    if let Ok(r) = receiver.try_recv() {
-        info!("Request type: {:?}", r);
-        match r {
-            message::Request::Feed(u) => {
-                info!("received feed request");
-                if let Ok(c) = feed::get_feed(u).await {
-                    // TODO: error handling
-                    let res = responder.send(message::Response::Feed(c));
-                    if res.is_err() {
-                        error!("failed to send message: {:?}", res.unwrap_err());
-                    }
-                }
-            }
-            message::Request::Episode(e) => {
-                info!("received episode request");
-                if let Some(i) = e {
-                    // don't need to load anything, just pass it back to the UI
-                    let res = responder.send(message::Response::Episode(i));
-                    if res.is_err() {
-                        error!("failed to send message {:?}", res.unwrap_err());
-                    }
-                }
-            }
         }
     }
 }
