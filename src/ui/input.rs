@@ -1,35 +1,35 @@
 #[derive(Default, Debug, PartialEq, Eq)]
-pub enum UserInput {
+pub enum Command {
     #[default]
     NoOp,
     FetchPodcastFeed(String),
 }
 
-pub fn parse(s: &str) -> UserInput {
+pub fn parse(s: &str) -> Command {
     let parts = s.split(" ");
     if parts.clone().count() < 1 {
-        return UserInput::NoOp
+        return Command::NoOp
     }
 
     let mut collection: Vec<&str> = parts.collect::<Vec<&str>>();
     match collection[0] {
         "/load" => {
-            UserInput::FetchPodcastFeed(collection.drain(1..).collect())
+            Command::FetchPodcastFeed(collection.drain(1..).collect())
         },
-        _ => UserInput::NoOp
+        _ => Command::NoOp
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ui::input::UserInput;
+    use crate::ui::input::Command;
 
     use super::parse;
 
     #[test]
     fn parses_fetch_podcast_feed() {
         let input = "/load https://google.com something else";
-        if let UserInput::FetchPodcastFeed(url) = parse(input) {
+        if let Command::FetchPodcastFeed(url) = parse(input) {
             assert_eq!(url, "https://google.comsomethingelse") // TODO: should this only take the first arg?
         } else {
             panic!("Did not get the right InputType");
@@ -39,6 +39,6 @@ mod tests {
     #[test]
     fn parses_no_op() {
         let input = "something";
-        assert_eq!(parse(input), UserInput::NoOp)
+        assert_eq!(parse(input), Command::NoOp)
     }
 }

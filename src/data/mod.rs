@@ -5,7 +5,7 @@ use tracing::{debug, error, info, instrument};
 use crate::{
     feed::get_feed,
     message::{DisplayAction, Request, Response},
-    ui::input::UserInput,
+    ui::input::Command,
     App,
 };
 
@@ -40,9 +40,9 @@ pub async fn handle_background_request(responder: &Sender<Response>, receiver: &
 }
 
 #[instrument]
-pub fn handle_user_input(app: &mut App, sender: &Sender<Request>, i: UserInput) {
+pub fn handle_user_input(app: &mut App, sender: &Sender<Request>, i: Command) {
     match i {
-        UserInput::FetchPodcastFeed(url) => {
+        Command::FetchPodcastFeed(url) => {
             info!("fetch podcast feed: {}", url);
             if let Ok(u) = url::Url::parse(url.as_str()) {
                 info!("Fetch RSS feed from {url}", url = u);
@@ -67,14 +67,14 @@ mod tests {
 
     use crate::{
         message::{self, DisplayAction, Request},
-        App, ui::input::UserInput,
+        App, ui::input::Command,
     };
 
     use super::handle_user_input;
 
     #[test]
     fn send_load_request_publishes_feed_message() -> Result<(), ParseError> {
-        let input = UserInput::FetchPodcastFeed("https://google.com".to_string());
+        let input = Command::FetchPodcastFeed("https://google.com".to_string());
         let mut app = App::default();
         let (data_tx, data_rx) = mpsc::channel::<message::Request>();
 
@@ -85,7 +85,7 @@ mod tests {
 
         handle_user_input(&mut app, &data_tx, input);
 
-        if let Ok(res) = data_rx.recv_timeout(Duration::from_secs(3)) {
+        if let Ok(res) = data_rx.recv_timeout(Duration::from_secs(1)) {
             assert_eq!(res, Request::Feed(expected?));
         } else {
             panic!("did not receive a message in time");
@@ -97,14 +97,14 @@ mod tests {
 
     #[test]
     fn send_no_op_does_nothing() {
-        let input = UserInput::NoOp;
+        let input = Command::NoOp;
         let mut app = App::default();
         let (data_tx, data_rx) = mpsc::channel::<message::Request>();
 
         assert_eq!(DisplayAction::Input, app.display_action);
 
         handle_user_input(&mut app, &data_tx, input);
-        if let Ok(_) = data_rx.recv_timeout(Duration::from_secs(3)) {
+        if let Ok(_) = data_rx.recv_timeout(Duration::from_secs(1)) {
             panic!("should not have received a message")
         }
 
