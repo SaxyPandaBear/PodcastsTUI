@@ -39,6 +39,44 @@ pub async fn handle_background_request(responder: &Sender<Response>, receiver: &
     }
 }
 
+#[cfg(test)]
+mod background_request {
+    use std::{sync::mpsc, time::Duration, mem};
+
+    use crate::{message::{Request, Response}, data::handle_background_request};
+
+    #[test]
+    fn feed() {
+        let (data_tx, data_rx) = mpsc::channel::<Request>();
+        let (ui_tx, ui_rx) = mpsc::channel::<Response>();
+
+        // if I send a Request::Feed, I should get a Response::Feed
+        // TODO: do I really want to do e2e testing with a real RSS feed?
+        let url = url::Url::parse("https://feeds.captivate.fm/wine-about-it/");
+        if url.is_err() {
+            panic!("failed to parse test URL");
+        }
+
+        let url = url.unwrap();
+        let res = data_tx.send(Request::Feed(url));
+        assert!(res.is_ok());
+
+        handle_background_request(&ui_tx, &data_rx);
+
+        if let Ok(res) = ui_rx.recv_timeout(Duration::from_secs(1)) {
+            // just make sure that it is a Feed type
+            assert_eq!(mem::discriminant(&Response::Feed(rss::Channel::default())), mem::discriminant(&res));
+        } else {
+            panic!("did not receive a message in time");
+        }
+    }
+
+    #[test]
+    fn episode() {
+
+    }
+}
+
 #[instrument]
 pub fn handle_user_input(app: &mut App, sender: &Sender<Request>, i: Command) {
     match i {
@@ -60,7 +98,7 @@ pub fn handle_user_input(app: &mut App, sender: &Sender<Request>, i: Command) {
 }
 
 #[cfg(test)]
-mod tests {
+mod user_input {
     use std::{sync::mpsc, time::Duration};
 
     use url::{ParseError, Url};

@@ -6,17 +6,19 @@ pub enum Command {
 }
 
 pub fn parse(s: &str) -> Command {
-    let parts = s.split(" ");
-    if parts.clone().count() < 1 {
-        return Command::NoOp
-    }
+    let mut parts = s.split(" ");
 
-    let mut collection: Vec<&str> = parts.collect::<Vec<&str>>();
-    match collection[0] {
-        "/load" => {
-            Command::FetchPodcastFeed(collection.drain(1..).collect())
-        },
-        _ => Command::NoOp
+    let op = parts.next();
+    if op.is_none() {
+        return Command::NoOp;
+    }
+    let op = op.unwrap();
+
+    let args = parts.map(str::to_string).collect::<Vec<String>>();
+
+    match op {
+        "/load" => Command::FetchPodcastFeed(args.join("")),
+        _ => Command::NoOp,
     }
 }
 
@@ -37,8 +39,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_fetch_podcast_feed_no_args() {
+        let input = "/load";
+        if let Command::FetchPodcastFeed(url) = parse(input) {
+            assert_eq!(url, "")
+        } else {
+            panic!("Did not get the right InputType");
+        }
+    }
+
+    #[test]
     fn parses_no_op() {
         let input = "something";
-        assert_eq!(parse(input), Command::NoOp)
+        assert_eq!(parse(input), Command::NoOp);
+    }
+
+    #[test]
+    fn parses_empty_input() {
+        assert_eq!(parse(""), Command::NoOp);
     }
 }
