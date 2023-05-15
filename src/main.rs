@@ -165,7 +165,6 @@ fn run_app<B: Backend>(
                             "Submitting request for display mode {display:?}",
                             display = app.display_action
                         );
-                        // TODO: figure out how to handle different types of text input
                         match app.display_action {
                             DisplayAction::Input => {
                                 // submit a message to data layer

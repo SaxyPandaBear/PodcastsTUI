@@ -43,6 +43,8 @@ pub async fn handle_background_request(responder: &Sender<Response>, receiver: &
 mod background_request {
     use std::{sync::mpsc, time::Duration, mem};
 
+    use rss::Item;
+
     use crate::{message::{Request, Response}, data::handle_background_request};
 
     #[test]
@@ -73,7 +75,21 @@ mod background_request {
 
     #[test]
     fn episode() {
+        let (data_tx, data_rx) = mpsc::channel::<Request>();
+        let (ui_tx, ui_rx) = mpsc::channel::<Response>();
 
+        let item = Item::default();
+        let res = data_tx.send(Request::Episode(Some(item)));
+        assert!(res.is_ok());
+
+        handle_background_request(&ui_tx, &data_rx);
+
+        if let Ok(res) = ui_rx.recv_timeout(Duration::from_secs(1)) {
+            // just make sure that it is a Feed type
+            assert_eq!(mem::discriminant(&Response::Episode(Item::default())), mem::discriminant(&res));
+        } else {
+            panic!("did not receive a message in time");
+        }
     }
 }
 
