@@ -43,7 +43,7 @@ pub struct App {
     channel: Option<Channel>,
     // Loaded podcast episode
     item: Option<Item>,
-    state: ListState, // TODO: should there be multiple list states? 
+    state: ListState, // TODO: should there be multiple list states?
     // keep track of what to render on the UI across ticks
     display_action: DisplayAction,
 }

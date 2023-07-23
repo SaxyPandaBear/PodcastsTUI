@@ -1,4 +1,4 @@
-use tracing::{Metadata, Level};
+use tracing::{Level, Metadata};
 use tracing_subscriber::layer::{Context, Filter};
 
 #[derive(Default, Debug)]

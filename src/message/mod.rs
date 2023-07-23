@@ -12,11 +12,11 @@ pub enum DisplayAction {
 #[derive(Debug, PartialEq)]
 pub enum Request {
     Feed(Url),
-    Episode(Option<Item>)
+    Episode(Option<Item>),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Response {
     Feed(Channel),
-    Episode(Item)
+    Episode(Item),
 }

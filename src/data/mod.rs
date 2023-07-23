@@ -41,11 +41,14 @@ pub async fn handle_background_request(responder: &Sender<Response>, receiver: &
 
 #[cfg(test)]
 mod background_request {
-    use std::{sync::mpsc, time::Duration, mem};
+    use std::{mem, sync::mpsc, time::Duration};
 
     use rss::Item;
 
-    use crate::{message::{Request, Response}, data::handle_background_request};
+    use crate::{
+        data::handle_background_request,
+        message::{Request, Response},
+    };
 
     #[test]
     fn feed() {
@@ -67,7 +70,10 @@ mod background_request {
 
         if let Ok(res) = ui_rx.recv_timeout(Duration::from_secs(1)) {
             // just make sure that it is a Feed type
-            assert_eq!(mem::discriminant(&Response::Feed(rss::Channel::default())), mem::discriminant(&res));
+            assert_eq!(
+                mem::discriminant(&Response::Feed(rss::Channel::default())),
+                mem::discriminant(&res)
+            );
         } else {
             panic!("did not receive a message in time");
         }
@@ -86,7 +92,10 @@ mod background_request {
 
         if let Ok(res) = ui_rx.recv_timeout(Duration::from_secs(1)) {
             // just make sure that it is a Feed type
-            assert_eq!(mem::discriminant(&Response::Episode(Item::default())), mem::discriminant(&res));
+            assert_eq!(
+                mem::discriminant(&Response::Episode(Item::default())),
+                mem::discriminant(&res)
+            );
         } else {
             panic!("did not receive a message in time");
         }
@@ -121,7 +130,8 @@ mod user_input {
 
     use crate::{
         message::{self, DisplayAction, Request},
-        App, ui::input::Command,
+        ui::input::Command,
+        App,
     };
 
     use super::handle_user_input;
@@ -134,7 +144,7 @@ mod user_input {
 
         let expected = Url::parse("https://google.com");
         assert_eq!(expected.clone()?.host_str(), Some("google.com"));
-        
+
         assert_eq!(DisplayAction::Input, app.display_action);
 
         handle_user_input(&mut app, &data_tx, input);

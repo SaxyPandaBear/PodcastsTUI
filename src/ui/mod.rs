@@ -6,7 +6,7 @@ use tui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -26,11 +26,12 @@ where
         .horizontal_margin(2)
         .vertical_margin(1)
         .constraints(
-            [ // TODO: figure out the minimum size requirements
-                Constraint::Percentage(10),  // help text
-                Constraint::Percentage(15),  // input box
+            [
+                // TODO: figure out the minimum size requirements
+                Constraint::Percentage(10), // help text
+                Constraint::Percentage(15), // input box
                 Constraint::Percentage(65), // output contents
-                Constraint::Percentage(15),  // play bar
+                Constraint::Percentage(15), // play bar
             ]
             .as_ref(),
         )
@@ -80,9 +81,38 @@ pub fn draw_display_area<B: Backend>(f: &mut Frame<B>, app: &mut App, parent: Re
     let _entered = span.enter();
 
     match app.display_action {
-        DisplayAction::ListEpisodes | DisplayAction::Input => draw_episode_list(f, app, parent),
+        DisplayAction::ListEpisodes => draw_episode_list(f, app, parent),
         DisplayAction::DescribeEpisode => draw_episode_details(f, app, parent),
+        _ => draw_usage_hint(f, app, parent),
     }
+}
+
+pub fn draw_usage_hint<B: Backend>(f: &mut Frame<B>, _app: &mut App, parent: Rect) {
+    let span = span!(Level::TRACE, "render_main_hints");
+    let _entered = span.enter();
+
+    let constraints = [Constraint::Ratio(25, 100), Constraint::Length(parent.width)];
+
+    let t = Table::new(vec![Row::new(vec![
+        Cell::from("/load").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Load an RSS feed"),
+    ])
+    .bottom_margin(1)
+    .height(1)])
+    .header(
+        Row::new(vec!["Command", "Description"])
+            .bottom_margin(1)
+            .height(1),
+    )
+    .column_spacing(1)
+    .widths(&constraints)
+    .block(
+        Block::default()
+            .title("Available commands")
+            .borders(Borders::all()),
+    );
+
+    f.render_widget(t, parent);
 }
 
 pub fn draw_episode_list<B: Backend>(f: &mut Frame<B>, app: &mut App, parent: Rect) {
